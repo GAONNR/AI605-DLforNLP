@@ -3,6 +3,7 @@ from random import randint
 
 ### You may import any Python standard library here
 import re
+from collections import Counter
 ### END YOUR LIBRARIES
 
 import torch
@@ -72,6 +73,20 @@ def build_vocab(
     word2idx: Dict[str, int] = {PAD: PAD_idx, UNK: UNK_idx}
     word_freq: List[int] = [0, 0]
 
+    counter = Counter()
+    for sentence in sentences:
+        counter.update(sentence)
+    for sentence in sentences:
+        for word in sentence:
+            if counter[word] < min_freq:
+                word_freq[UNK_idx] += 1
+                continue
+            if word in word2idx:
+                word_freq[word2idx[word]] += 1
+            else:
+                idx2word.append(word)
+                word2idx[word] = len(idx2word) - 1
+                word_freq.append(1)
     ### END YOUR CODE
 
     assert idx2word[PAD_idx] == PAD and word2idx[PAD] == PAD_idx, \
@@ -104,9 +119,10 @@ def skipgram(
     """
 
     ### YOUR CODE HERE (~3 lines)
-    center_word: str = ""
-    outside_words: List[str] = list()
-
+    center_word: str = sentence[center_word_loc]
+    start: int = 0 if center_word_loc - window_size < 0 else center_word_loc - window_size
+    end: int = len(sentence) if center_word_loc + window_size >= len(sentence) else center_word_loc + window_size + 1
+    outside_words: List[str] = sentence[start : center_word_loc] + sentence[center_word_loc + 1 : end]
     ### END YOUR CODE
     return center_word, outside_words
 
