@@ -3,7 +3,7 @@ from typing import List, Dict, Tuple, Set
 import random
 
 ### You may import any Python standard library here.
-
+import torch.nn.functional as F
 ### END YOUR LIBRARIE
 
 import torch
@@ -57,6 +57,13 @@ def naive_softmax_loss(
 
     ### YOUR CODE HERE (~4 lines)
     losses: torch.Tensor = None
+    centers: torch.Tensor = center_vectors[center_word_index].unsqueeze(2)
+    outsides: torch.Tensor = outside_vectors[outside_word_indices]
+    print('centers:', centers.shape)
+    print('outsides:', outsides.shape)
+    losses = F.log_softmax(torch.matmul(outsides, centers), dim=2) * -1
+    losses = torch.mean(losses, dim=1).squeeze()
+    print('dot:', losses.shape)
 
     ### END YOUR CODE
     assert losses.shape == torch.Size([batch_size])
