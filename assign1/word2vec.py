@@ -105,8 +105,19 @@ def neg_sampling_loss(
     assert negative_samples.shape == torch.Size([batch_size, outside_word_size, K])
 
     ###  YOUR CODE HERE (~5 lines)
-    losses: torch.Tensor = None
+    centers: torch.Tensor = center_vectors[center_word_index].unsqueeze(2)
 
+    vec_dots: torch.Tensor = torch.matmul(outside_vectors, centers).squeeze()
+
+    losses_front = F.logsigmoid(torch.gather(vec_dots, 1, outside_word_indices)) * -1
+    tmp: torch.Tensor = negative_samples.reshape(batch_size, -1)
+    losses_back: torch.Tensor = F.logsigmoid(torch.gather(vec_dots, 1, tmp) * -1)\
+        .reshape(batch_size, outside_word_size, -1)\
+        .sum(dim=2)
+    
+    losses: torch.Tensor = (losses_front - losses_back)
+    losses[outside_word_indices == 0] = 0.
+    losses = losses.sum(dim=1).squeeze()
     ### END YOUR CODE
     assert losses.shape == torch.Size([batch_size])
     return losses
