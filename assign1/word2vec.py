@@ -56,15 +56,13 @@ def naive_softmax_loss(
     PAD = SkipgramDataset.PAD_TOKEN_IDX
 
     ### YOUR CODE HERE (~4 lines)
-    losses: torch.Tensor = None
     centers: torch.Tensor = center_vectors[center_word_index].unsqueeze(2)
-    outsides: torch.Tensor = outside_vectors[outside_word_indices]
-    print('centers:', centers.shape)
-    print('outsides:', outsides.shape)
-    losses = F.log_softmax(torch.matmul(outsides, centers), dim=2) * -1
-    losses = torch.mean(losses, dim=1).squeeze()
-    print('dot:', losses.shape)
-
+    losses: torch.Tensor = torch.matmul(outside_vectors, centers).squeeze()
+    losses[:, PAD] = -1 * float('inf')
+    losses = F.log_softmax(losses, dim=1) * -1
+    losses[:, PAD] = 0.
+    losses = torch.gather(losses, 1, outside_word_indices)
+    losses = losses.sum(dim=1).squeeze()
     ### END YOUR CODE
     assert losses.shape == torch.Size([batch_size])
     return losses
