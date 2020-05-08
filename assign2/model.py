@@ -209,8 +209,8 @@ class Seq2Seq(torch.nn.Module):
 
         predicted = SOS
         for _ in range(max_len):
-            decoder_input = torch.LongTensor([predicted])
-            decoder_mask = torch.BoolTensor([False])
+            decoder_input = sentence.new_full((1, ), fill_value=predicted)
+            decoder_mask = sentence.new_full((1, ), fill_value=False).bool()
 
             embedded_trg: torch.Tensor = self.trg_embedding(decoder_input)
             hidden_state, cell_state = self.decoder(
