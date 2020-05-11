@@ -4,16 +4,18 @@ import random
 from random import randint
 
 import torch
-import torch.nn as nn 
+import torch.nn as nn
 
-### You can import any Python standard libraries or pyTorch sub directories here
-
-### END YOUR LIBRARIES
+# You can import any Python standard libraries or pyTorch sub directories here
+import math
+import torch.nn.functional as F
+# END YOUR LIBRARIES
 
 from bpe import BytePairEncoding
 
+
 def dot_scaled_attention(
-    query: torch.Tensor, 
+    query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
     padding_mask: torch.Tensor
@@ -52,14 +54,20 @@ def dot_scaled_attention(
     assert (padding_mask == (key == 0.).all(-1)).all()
     assert (padding_mask == (value == 0.).all(-1)).all()
 
-    ### YOUR CODE HERE (~4 lines)
+    # YOUR CODE HERE (~4 lines)
     attention: torch.Tensor = None
-    
-    ### END YOUR CODE
+    scaled_qk: torch.Tensor = torch.bmm(query.permute(1, 0, 2),
+                                        key.permute(1, 2, 0)) / math.sqrt(d_k)
+    scaled_qk = scaled_qk.permute(0, 2, 1)
+    scaled_qk[padding_mask.permute(1, 0)] = float('-inf')
+    scaled_qk = scaled_qk.permute(0, 2, 1)
+    softmax_qk: torch.Tensor = F.softmax(scaled_qk, dim=2)
+    attention = torch.bmm(softmax_qk, value.permute(1, 0, 2)).permute(1, 0, 2)
+    # END YOUR CODE
 
     # Don't forget setting attention result of <PAD> to zeros.
     # This will be useful for debuging
-    attention[padding_mask, :] = 0. 
+    attention[padding_mask, :] = 0.
 
     assert attention.shape == query_shape
     return attention
@@ -67,9 +75,9 @@ def dot_scaled_attention(
 
 class MultiHeadAttention(nn.Module):
     def __init__(self,
-        hidden_dim: int=256, 
-        n_head: int=8
-    ):
+                 hidden_dim: int = 256,
+                 n_head: int = 8
+                 ):
         """ Multi-head attention initializer
         Use below attributes to implement the forward function
 
@@ -86,17 +94,21 @@ class MultiHeadAttention(nn.Module):
         self.n_head = n_head
         self.d_k = hidden_dim // n_head
 
-        self.V_linear = nn.Linear(hidden_dim, self.n_head * self.d_k, bias=False)
-        self.K_linear = nn.Linear(hidden_dim, self.n_head * self.d_k, bias=False)
-        self.Q_linear = nn.Linear(hidden_dim, self.n_head * self.d_k, bias=False)
-        self.O_linear = nn.Linear(self.n_head * self.d_k, hidden_dim, bias=False)
+        self.V_linear = nn.Linear(
+            hidden_dim, self.n_head * self.d_k, bias=False)
+        self.K_linear = nn.Linear(
+            hidden_dim, self.n_head * self.d_k, bias=False)
+        self.Q_linear = nn.Linear(
+            hidden_dim, self.n_head * self.d_k, bias=False)
+        self.O_linear = nn.Linear(
+            self.n_head * self.d_k, hidden_dim, bias=False)
 
     def forward(self,
-        value: torch.Tensor,
-        key: torch.Tensor,
-        query: torch.Tensor,
-        padding_mask: torch.Tensor
-    ):
+                value: torch.Tensor,
+                key: torch.Tensor,
+                query: torch.Tensor,
+                padding_mask: torch.Tensor
+                ):
         """ Multi-head attention forward function
         Implement multi-head attention which takes value, key, query, and gives attention score.
         Use dot-scaled attention you have implemented above.
@@ -124,21 +136,34 @@ class MultiHeadAttention(nn.Module):
         input_shape = value.shape
         seq_length, batch_size, hidden_dim = input_shape
 
-        ### YOUR CODE HERE (~6 lines)
+        # YOUR CODE HERE (~6 lines)
         attention: torch.Tensor = None
+        lin_Vs: torch.Tensor = self.V_linear(value).reshape(
+            seq_length, batch_size * self.n_head, self.d_k)
+        lin_Ks: torch.Tensor = self.K_linear(key).reshape(
+            seq_length, batch_size * self.n_head, self.d_k)
+        lin_Qs: torch.Tensor = self.Q_linear(query).reshape(
+            seq_length, batch_size * self.n_head, self.d_k)
+        repeated_paddings: torch.Tensor = torch.repeat_interleave(
+            padding_mask, self.n_head, dim=1)
 
-        ### END YOUR CODE
+        attention = dot_scaled_attention(
+            lin_Qs, lin_Ks, lin_Vs, repeated_paddings)
+        attention = self.O_linear(attention.reshape(
+            seq_length, batch_size, self.n_head * self.d_k))
+
+        # END YOUR CODE
         assert attention.shape == input_shape
         return attention
 
 
 class TransformerEncoderBlock(nn.Module):
     def __init__(self,
-        hidden_dim: int=256,
-        dropout: float=.1,
-        n_head: int=8,
-        feed_forward_dim: int=512
-    ):
+                 hidden_dim: int = 256,
+                 dropout: float = .1,
+                 n_head: int = 8,
+                 feed_forward_dim: int = 512
+                 ):
         """ Transformer Encoder Block initializer
         Use below attributes to implement the forward function
 
@@ -169,9 +194,9 @@ class TransformerEncoderBlock(nn.Module):
         self.norm2 = nn.LayerNorm(hidden_dim)
 
     def forward(self,
-        x: torch.Tensor,
-        padding_mask: torch.Tensor
-    ):
+                x: torch.Tensor,
+                padding_mask: torch.Tensor
+                ):
         """  Transformer Encoder Block forward function
         Implement transformer encoder block with the given attributes.
         We will stack this module to constuct a BERT model.
@@ -194,14 +219,19 @@ class TransformerEncoderBlock(nn.Module):
         # All vlues in last dimension (hidden dimension) are zeros for <PAD> location
         assert (padding_mask == (x == 0.).all(-1)).all()
 
-        ### YOUR CODE HERE (~5 lines)
-        output: torch.Tensor = None
+        # YOUR CODE HERE (~5 lines)
+        attn: torch.Tensor = self.attention(x, x, x, padding_mask)
+        attn = x + self.dropout1(attn)
+        attn = self.norm1(attn)
+        output: torch.Tensor = self.output(attn)
+        output = attn + self.dropout2(output)
+        output = self.norm2(output)
 
-        ### END YOUR CODE
+        # END YOUR CODE
 
         # Don't forget setting output result of <PAD> to zeros.
         # This will be useful for debuging
-        output[padding_mask] = 0. 
+        output[padding_mask] = 0.
 
         assert output.shape == input_shape
         return output
@@ -211,17 +241,20 @@ class TransformerEncoderBlock(nn.Module):
 # Read helper classes to implement trainers properly! #
 #######################################################
 
+
 class PositionalEncoding(nn.Module):
     """ Positional encoder from pyTorch tutorial
     This class injects token position information to the tensor
     Link: https://pytorch.org/tutorials/beginner/transformer_tutorial
     """
+
     def __init__(self, hidden_dim, max_len=1000):
         super(PositionalEncoding, self).__init__()
 
         pe = torch.zeros(max_len, hidden_dim)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, hidden_dim, 2).float() * (-math.log(10000.0) / hidden_dim))
+        div_term = torch.exp(torch.arange(
+            0, hidden_dim, 2).float() * (-math.log(10000.0) / hidden_dim))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe[:, None, :]
@@ -230,37 +263,42 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         return x + self.pe[:x.size(0), ...]
 
+
 class SegmentationEmbeddings(nn.Module):
     """ Segmentaion embedding layer
     This class injects segmentation information to the tensor.
     """
+
     def __init__(self, hidden_dim, max_seg_id=3):
         super().__init__()
         self.embedding = nn.Embedding(max_seg_id, hidden_dim)
 
     def forward(self, x, tokens):
         seg_ids = torch.cumsum(tokens == BytePairEncoding.SEP_token_idx, dim=0) \
-                        - (tokens == BytePairEncoding.SEP_token_idx).to(torch.long)
+            - (tokens == BytePairEncoding.SEP_token_idx).to(torch.long)
         return x + self.embedding(seg_ids)
+
 
 class BaseModel(nn.Module):
     """ BERT base model
     MLM & NSP pretraining model and IMDB classification model share the structure of this class.
     """
+
     def __init__(
         self, token_num: int,
-        hidden_dim: int=256, num_layers: int=4,
-        dropout: float=0.1, max_len: int=1000,
+        hidden_dim: int = 256, num_layers: int = 4,
+        dropout: float = 0.1, max_len: int = 1000,
         **kwargs
     ):
         super().__init__()
-        self.embedding = nn.Embedding(token_num, hidden_dim, padding_idx=BytePairEncoding.PAD_token_idx)
+        self.embedding = nn.Embedding(
+            token_num, hidden_dim, padding_idx=BytePairEncoding.PAD_token_idx)
         self.position_encoder = PositionalEncoding(hidden_dim, max_len)
         self.segmentation_embedding = SegmentationEmbeddings(hidden_dim)
         self.dropout = nn.Dropout(dropout)
 
-        encoders = [TransformerEncoderBlock(hidden_dim=hidden_dim, dropout=dropout, **kwargs) \
-                                                                                for _ in range(num_layers)]
+        encoders = [TransformerEncoderBlock(hidden_dim=hidden_dim, dropout=dropout, **kwargs)
+                    for _ in range(num_layers)]
         self.encoders = nn.ModuleList(encoders)
 
     def forward(self, x):
@@ -276,10 +314,12 @@ class BaseModel(nn.Module):
 
         return out
 
+
 class MLMandNSPmodel(BaseModel):
     """ MLM & NSP model
     Pretraining model for MLM & NSP
     """
+
     def __init__(self, token_num: int, hidden_dim=256, **kwargs):
         super().__init__(token_num, hidden_dim=hidden_dim, **kwargs)
         self.MLM_output = nn.Sequential(
@@ -288,23 +328,27 @@ class MLMandNSPmodel(BaseModel):
             nn.LayerNorm(hidden_dim),
             nn.Linear(hidden_dim, token_num)
         )
-        self.NSP_output = nn.Linear(hidden_dim, 2) # Binary classes, 0 for False and 1 for True.
+        # Binary classes, 0 for False and 1 for True.
+        self.NSP_output = nn.Linear(hidden_dim, 2)
 
     def forward(self, x):
         out = super().forward(x)
         return self.MLM_output(out), self.NSP_output(out[0, ...])
 
+
 class IMDBmodel(BaseModel):
     """ IMDB classification model
     IMDB review classification model which generates binary classes.
     """
+
     def __init__(self, token_num: int, hidden_dim=256, **kwargs):
         super().__init__(token_num, hidden_dim=hidden_dim, **kwargs)
         self.output = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 2),
             nn.ReLU(),
-            nn.Linear(hidden_dim * 2, 2) # Binary classes, 0 for False and 1 for True
-        ) 
+            # Binary classes, 0 for False and 1 for True
+            nn.Linear(hidden_dim * 2, 2)
+        )
 
     def forward(self, x):
         out = super().forward(x)
@@ -313,6 +357,7 @@ class IMDBmodel(BaseModel):
 #############################################
 # Testing functions below.                  #
 #############################################
+
 
 def test_dot_scaled_attention():
     print("======Dot Scaled Attention Test Case======")
@@ -323,35 +368,39 @@ def test_dot_scaled_attention():
     padding_mask = []
     for _ in range(0, batch_size):
         padding_length = randint(0, sequence_length // 2)
-        padding_mask.append([False] * (sequence_length - padding_length) + [True] * padding_length)
+        padding_mask.append([False] * (sequence_length -
+                                       padding_length) + [True] * padding_length)
     padding_mask = torch.Tensor(padding_mask).to(torch.bool).T
-    query = torch.normal(0, 1, [sequence_length, batch_size, d_k], requires_grad=True)
+    query = torch.normal(
+        0, 1, [sequence_length, batch_size, d_k], requires_grad=True)
     key = torch.normal(0, 1, [sequence_length, batch_size, d_k])
     value = torch.normal(0, 1, [sequence_length, batch_size, d_k])
     query.data[padding_mask, :] = 0.
     key[padding_mask, :] = 0.
     value[padding_mask, :] = 0.
 
-    attention = dot_scaled_attention(query=query, key=key, value=value, padding_mask=padding_mask)
+    attention = dot_scaled_attention(
+        query=query, key=key, value=value, padding_mask=padding_mask)
 
     # the first test
-    expected_attn = torch.Tensor([[ 0.17186931, -0.32684278,  0.07208001],
-                                  [ 0.09157918, -0.25314212,  0.15069686],
-                                  [ 0.17503032, -0.06557029,  0.45250115]])
+    expected_attn = torch.Tensor([[0.17186931, -0.32684278,  0.07208001],
+                                  [0.09157918, -0.25314212,  0.15069686],
+                                  [0.17503032, -0.06557029,  0.45250115]])
     assert attention[:3, :3, 0].allclose(expected_attn, atol=1e-7), \
         "Your attention does not match the expected result"
     print("The first test passed!")
 
     # the second test
     (attention ** 2).sum().backward()
-    expected_grad = torch.Tensor([[ 0.07309631,  0.13667740,  0.07164976],
-                                  [ 0.14387116,  0.06765153,  0.00688348],
-                                  [ 0.01171730, -0.01473261, -0.29229954]])
+    expected_grad = torch.Tensor([[0.07309631,  0.13667740,  0.07164976],
+                                  [0.14387116,  0.06765153,  0.00688348],
+                                  [0.01171730, -0.01473261, -0.29229954]])
     assert query.grad[:3, :3, 0].allclose(expected_grad, atol=1e-7), \
         "Your gradient does not match the expected result"
     print("The second test passed!")
 
     print("All 2 tests passed!")
+
 
 def test_multi_head_attention():
     print("======Multi-Head Attention Test Case======")
@@ -363,18 +412,20 @@ def test_multi_head_attention():
     padding_mask = []
     for _ in range(0, batch_size):
         padding_length = randint(0, sequence_length // 2)
-        padding_mask.append([False] * (sequence_length - padding_length) + [True] * padding_length)
+        padding_mask.append([False] * (sequence_length -
+                                       padding_length) + [True] * padding_length)
     padding_mask = torch.Tensor(padding_mask).to(torch.bool).T
-    x = torch.normal(0, 1, [sequence_length, batch_size, hidden_dim], requires_grad=True)
+    x = torch.normal(0, 1, [sequence_length, batch_size,
+                            hidden_dim], requires_grad=True)
     x.data[padding_mask, :] = 0.
 
     layer = MultiHeadAttention(hidden_dim=hidden_dim, n_head=n_head)
     attention = layer(value=x, key=x, query=x, padding_mask=padding_mask)
 
     # the first test
-    expected_attn = torch.Tensor([[ 0.05570966, -0.32757416, -0.23760433],
-                                  [ 0.06560279, -0.27974704, -0.24361116],
-                                  [ 0.05408835,  0.06359858, -0.10527476]])
+    expected_attn = torch.Tensor([[0.05570966, -0.32757416, -0.23760433],
+                                  [0.06560279, -0.27974704, -0.24361116],
+                                  [0.05408835,  0.06359858, -0.10527476]])
     assert attention[:3, :3, 0].allclose(expected_attn, atol=1e-7), \
         "Your attention does not match the expected result"
     print("The first test passed!")
@@ -390,6 +441,7 @@ def test_multi_head_attention():
 
     print("All 2 tests passed!")
 
+
 def test_transformer_encoder_block():
     print("======Transformer Encoder Block Test Case======")
     sequence_length = 10
@@ -401,21 +453,25 @@ def test_transformer_encoder_block():
     padding_mask = []
     for _ in range(0, batch_size):
         padding_length = randint(0, sequence_length // 2)
-        padding_mask.append([False] * (sequence_length - padding_length) + [True] * padding_length)
+        padding_mask.append([False] * (sequence_length -
+                                       padding_length) + [True] * padding_length)
     padding_mask = torch.Tensor(padding_mask).to(torch.bool).T
-    x = torch.normal(0, 1, [sequence_length, batch_size, hidden_dim], requires_grad=True)
+    x = torch.normal(0, 1, [sequence_length, batch_size,
+                            hidden_dim], requires_grad=True)
     x.data[padding_mask, :] = 0.
 
-    layer = TransformerEncoderBlock(hidden_dim=hidden_dim, n_head=n_head, feed_forward_dim=feed_forward_dim)
+    layer = TransformerEncoderBlock(
+        hidden_dim=hidden_dim, n_head=n_head, feed_forward_dim=feed_forward_dim)
     encoded = layer(x, padding_mask=padding_mask)
 
     # the test case
     expected_value = torch.Tensor([[-0.13002314,  1.75873685,  1.92743111],
                                    [-1.39377058, -0.64637190, -0.43793410],
-                                   [ 0.87437361, -0.03357963, -0.33361447]])
+                                   [0.87437361, -0.03357963, -0.33361447]])
     assert encoded[:3, :3, 0].allclose(expected_value, atol=1e-7), \
         "Your encoded value does not match the expected result"
     print("The test case passed!")
+
 
 if __name__ == "__main__":
     torch.set_printoptions(precision=8)

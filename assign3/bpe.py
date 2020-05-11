@@ -39,12 +39,13 @@ def build_bpe(
     WORD_END = BytePairEncoding.WORD_END  # Use this token as the end of a word
 
     # YOUR CODE HERE (~22 lines)
+    real_corpus = [x for x in corpus]
     idx2word: List[str] = SPECIAL
     words: Counter = Counter(
-        [' '.join(list(x)) + ' ' + WORD_END for x in corpus])
+        [' '.join(list(x)) + ' ' + WORD_END for x in real_corpus])
 
     initial_words: Set = set()
-    for word in corpus:
+    for word in real_corpus:
         initial_words.update(word)
     initial_words.add(WORD_END)
 
@@ -63,10 +64,13 @@ def build_bpe(
         new_subword = ''.join(max_freq_pair)
 
         new_words: Counter = Counter()
-        bigram = r'\b(%s %s)\b' % max_freq_pair
+        bigram = r'(?!\s)(%s %s)(?!\S)' % (max_freq_pair[0].replace(
+            '.', '\.'), max_freq_pair[1].replace('.', '\.'))
         for word in words:
             new_words[re.sub(bigram, new_subword, word)] = words[word]
 
+        if words == new_words:
+            break
         words = new_words
         subwords.append(new_subword)
     subwords.sort(key=len, reverse=True)
@@ -93,8 +97,22 @@ def encode(
     WORD_END = BytePairEncoding.WORD_END
 
     # YOUR CODE HERE (~10 lines)
-    tokens: List[int] = None
+    tokens: List[int] = list()
+    modified_sentence: List[str] = [word + WORD_END for word in sentence]
 
+    for word in modified_sentence:
+        candidates: List[List[int]] = [list() for x in word]
+        for curr in range(0, len(word)):
+            for past in range(curr + 1):
+                subword = word[past:curr + 1]
+                if subword in idx2word[5:]:
+                    if past > 0 and len(candidates[past - 1]) == 0:
+                        continue
+                    candidate = [idx2word.index(
+                        subword)] if past == 0 else candidates[past - 1] + [idx2word.index(subword)]
+                    if len(candidate) < len(candidates[curr]) or len(candidates[curr]) == 0:
+                        candidates[curr] = candidate
+        tokens += candidates[-1]
     # END YOUR CODE
 
     return tokens
@@ -117,8 +135,10 @@ def decode(
     WORD_END = BytePairEncoding.WORD_END
 
     # YOUR CODE HERE (~1 lines)
-    sentence: List[str] = None
-
+    sentence: List[str] = list()
+    for token in tokens:
+        sentence.append(idx2word[token])
+    sentence = ''.join(sentence).split(WORD_END)[:-1]
     # END YOUR CODE
     return sentence
 

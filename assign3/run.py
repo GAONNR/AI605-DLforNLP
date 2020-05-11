@@ -1,3 +1,8 @@
+from tqdm import tqdm, trange
+from data import IMDBdataset
+from model import IMDBmodel
+from bpe import BytePairEncoding
+import utils
 import os
 from typing import List, Union
 import pickle
@@ -5,18 +10,15 @@ import random
 
 import torch
 
-### You can import any Python standard libraries or pyTorch sub directories here
+# You can import any Python standard libraries or pyTorch sub directories here
+import torch.nn.functional as F
 
-### END YOUR LIBRARIES
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+# END YOUR LIBRARIES
 
-import utils
-
-from bpe import BytePairEncoding
-from model import IMDBmodel
-from data import IMDBdataset
 
 # You can use tqdm to check your progress
-from tqdm import tqdm, trange
+
 
 def training(
     model: IMDBmodel,
@@ -79,20 +81,82 @@ def training(
         learning_rate = 3e-5
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    ### YOUR CODE HERE
-    train_losses: List[float] = None
-    val_losses: List[float] = None
-    train_accuracies: List[float] = None
-    val_accuracies: List[float] = None
+    # YOUR CODE HERE
+    train_losses: List[float] = list()
+    val_losses: List[float] = list()
+    train_accuracies: List[float] = list()
+    val_accuracies: List[float] = list()
 
-    ### END YOUR CODE
+    if pretrained_model_path:
+        model_dict = model.state_dict()
+        pretrained_dict = {k: v for k, v in torch.load(
+            pretrained_model_path).items() if k in model_dict}
+        model_dict.update(pretrained_dict)
+        model.load_state_dict(model_dict)
 
-    assert len(train_losses) == len(val_losses) == len(train_accuracies) == len(val_accuracies) == epochs
+    train_loader = torch.utils.data.DataLoader(train_dataset,
+                                               batch_size=batch_size,
+                                               num_workers=4,
+                                               collate_fn=utils.imdb_collate_fn)
+    val_loader = torch.utils.data.DataLoader(val_dataset,
+                                             batch_size=batch_size,
+                                             num_workers=4,
+                                             collate_fn=utils.imdb_collate_fn)
+
+    for epoch in tqdm(range(epochs)):
+        model.train()
+        batch_train_loss = 0.0
+        batch_train_correct = 0
+        batch_train_total = 0
+        loop = 0
+        for sentences, labels in tqdm(iter(train_loader)):
+            optimizer.zero_grad()
+            out = model(sentences.to(device))
+            loss = F.cross_entropy(out, labels.long().to(
+                device), reduction='mean')
+            loss.backward()
+            optimizer.step()
+
+            batch_train_loss += loss.cpu().item()
+            preds = torch.argmax(out.cpu(), dim=1)
+
+            batch_train_correct += torch.sum(preds == labels).item()
+            batch_train_total += len(labels)
+            loop += 1
+
+        train_losses.append(batch_train_loss / loop)
+        train_accuracies.append(batch_train_correct / batch_train_total)
+
+        model.eval()
+        batch_val_loss = 0.0
+        batch_val_correct = 0
+        batch_val_total = 0
+        loop = 0
+        with torch.no_grad():
+            for sentences, labels in tqdm(iter(val_loader)):
+                out = model(sentences.to(device))
+                loss = F.cross_entropy(out, labels.long().to(
+                    device), reduction='mean')
+
+                batch_val_loss += loss.cpu().item()
+                preds = torch.argmax(out.cpu(), dim=1)
+
+                batch_val_correct += torch.sum(preds == labels).item()
+                batch_val_total += len(labels)
+                loop += 1
+
+        val_losses.append(batch_val_loss / loop)
+        val_accuracies.append(batch_val_correct / batch_val_total)
+
+    # END YOUR CODE
+
+    assert len(train_losses) == len(val_losses) == len(
+        train_accuracies) == len(val_accuracies) == epochs
 
     assert all(isinstance(loss, float) for loss in train_losses) and \
-           all(isinstance(loss, float) for loss in val_losses) and \
-           all(isinstance(accuracy, float) for accuracy in train_accuracies) and \
-           all(isinstance(accuracy, float) for accuracy in val_accuracies)
+        all(isinstance(loss, float) for loss in val_losses) and \
+        all(isinstance(accuracy, float) for accuracy in train_accuracies) and \
+        all(isinstance(accuracy, float) for accuracy in val_accuracies)
 
     return train_losses, val_losses, train_accuracies, val_accuracies
 
@@ -105,6 +169,7 @@ def training(
 # We will grade the score by running your saved model.      #
 #############################################################
 
+
 def train_model():
     print("======IMDB Training======")
     """ IMDB Training 
@@ -113,7 +178,7 @@ def train_model():
     """
     train_dataset = IMDBdataset(os.path.join('data', 'imdb_train.csv'))
     val_dataset = IMDBdataset(os.path.join('data', 'imdb_val.csv'))
-    model = IMDBmodel(train_dataset.token_num)
+    model = IMDBmodel(train_dataset.token_num).to(device)
 
     model_name = 'imdb'
 
@@ -127,28 +192,31 @@ def train_model():
         # You can use a model which has been pretrained over 200 epochs by TA
         # If you use this saved model, you should mention it in the report
         #
-        # pretrained_model_path = 'pretrained_byTA.pth' 
+        # pretrained_model_path = 'pretrained_byTA.pth'
 
     else:
         model_name += '_no_fine_tuned'
         pretrained_model_path = None
-        
+
     train_losses, val_losses, train_accuracies, val_accuracies \
-            = training(model, model_name, train_dataset, val_dataset, \
-                       pretrained_model_path=pretrained_model_path)
+        = training(model, model_name, train_dataset, val_dataset,
+                   pretrained_model_path=pretrained_model_path)
 
     torch.save(model.state_dict(), model_name+'_final.pth')
 
     with open(model_name+'_result.pkl', 'wb') as f:
-        pickle.dump((train_losses, val_losses, train_accuracies, val_accuracies), f)
+        pickle.dump((train_losses, val_losses,
+                     train_accuracies, val_accuracies), f)
 
     utils.plot_values(train_losses, val_losses, title=model_name + "_losses")
-    utils.plot_values(train_accuracies, val_accuracies, title=model_name + "_accuracies")
+    utils.plot_values(train_accuracies, val_accuracies,
+                      title=model_name + "_accuracies")
 
     print("Final training loss: {:06.4f}".format(train_losses[-1]))
     print("Final validation loss: {:06.4f}".format(val_losses[-1]))
     print("Final training accuracy: {:06.4f}".format(train_accuracies[-1]))
     print("Final validation accuracy: {:06.4f}".format(val_accuracies[-1]))
+
 
 if __name__ == "__main__":
     torch.set_printoptions(precision=8)
